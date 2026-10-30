@@ -1,22 +1,19 @@
 services:
   db-games:
     image: mcr.microsoft.com/mssql/server:2022-latest
-
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: ${SQL_PASSWORD}
-
     ports:
       - "1433:1433"
-
     volumes:
       - datos-games:/var/opt/mssql
-
     healthcheck:
       test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -Q "SELECT 1" || exit 1
       interval: 10s
       retries: 15
       start_period: 20s
+
   db-reviews:
     image: mongo:7
     ports:
@@ -28,6 +25,95 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: gameshelf
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  sql-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      db-games:
+        condition: service_healthy
+    environment:
+      SQL_PASSWORD: ${SQL_PASSWORD}
+    volumes:
+      - ./services/auth/sql/init.sql:/scripts/auth.sql:ro
+      - ./services/games/sql/init.sql:/scripts/games.sql:ro
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        /opt/mssql-tools18/bin/sqlcmd -S db-games -U sa -P "$$SQL_PASSWORD" -C -b -i /scripts/auth.sql
+        /opt/mssql-tools18/bin/sqlcmd -S db-games -U sa -P "$$SQL_PASSWORD" -C -b -i /scripts/games.sql
+        echo "Bases de datos inicializadas correctamente"
+
+  auth:
+    build: ./services/auth
+    environment:
+      PORT: 3001
+      DB_USER: sa
+      DB_PASSWORD: ${SQL_PASSWORD}
+      DB_SERVER: db-games
+      DB_PORT: 1433
+      DB_NAME: GameShelfAuth
+      JWT_SECRET: ${JWT_SECRET}
+      RABBITMQ_URL: amqp://gameshelf:${RABBITMQ_PASSWORD}@rabbitmq:5672
+    depends_on:
+      db-games:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      sql-init:
+        condition: service_completed_successfully
+
+  games:
+    build: ./services/games
+    environment:
+      PORT: 3002
+      DB_USER: sa
+      DB_PASSWORD: ${SQL_PASSWORD}
+      DB_SERVER: db-games
+      DB_PORT: 1433
+      DB_NAME: GameShelfGames
+      MONGO_URI: mongodb://db-reviews:27017/gameshelf_reviews
+      JWT_SECRET: ${JWT_SECRET}
+      RABBITMQ_URL: amqp://gameshelf:${RABBITMQ_PASSWORD}@rabbitmq:5672
+    depends_on:
+      db-games:
+        condition: service_healthy
+      db-reviews:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      sql-init:
+        condition: service_completed_successfully
+
+  gateway:
+    build: ./gateway
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      AUTH_URL: http://auth:3001
+      GAMES_URL: http://games:3002
+    depends_on:
+      - auth
+      - games
+
 volumes:
   datos-games:
   datos-reviews:
+
+

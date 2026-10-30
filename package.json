@@ -1,0 +1,12 @@
+{
+  "name": "gameshelf",
+  "version": "2.0.0",
+  "private": true,
+  "description": "GameShelf - Proyecto final Fullstack SQL y MongoDB",
+  "scripts": {
+    "test": "npm test --prefix services/auth && npm test --prefix services/games && npm test --prefix gateway && npm test --prefix frontend",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  }
+}
